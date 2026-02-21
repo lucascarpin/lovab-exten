@@ -11375,3 +11375,116 @@ async function createProjectViaNavigation(_0x34b7c5, _0x23cd47) {
     );
   }
 }
+
+// ===== Free mode overrides (manual deobfuscation fallback) =====
+// These function declarations intentionally override obfuscated versions above.
+
+const FREE_LICENSE_KEY = "LAC-FREE-ACCESS-UNLOCKED";
+
+function formatLicenseKey(raw = "") {
+  const normalized = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!normalized) return FREE_LICENSE_KEY;
+
+  const groups = normalized.match(/.{1,4}/g) || [];
+  return groups.slice(0, 5).join("-");
+}
+
+async function validateLicense() {
+  return {
+    success: true,
+    valid: true,
+    freeMode: true,
+    license: { key: FREE_LICENSE_KEY },
+  };
+}
+
+async function saveLicense(key = FREE_LICENSE_KEY) {
+  const expiresAt = new Date("2099-12-31T23:59:59Z").getTime();
+  await chrome.storage.local.set({
+    license: formatLicenseKey(key),
+    licenseValidatedAt: Date.now(),
+    licenseExpiresAt: expiresAt,
+  });
+
+  return { success: true, valid: true, freeMode: true };
+}
+
+async function getSavedLicense() {
+  const { license, licenseExpiresAt, licenseValidatedAt } = await chrome.storage.local.get([
+    "license",
+    "licenseExpiresAt",
+    "licenseValidatedAt",
+  ]);
+
+  if (!license) return null;
+  if (licenseExpiresAt && Date.now() > licenseExpiresAt) return null;
+
+  return {
+    key: license,
+    license,
+    expiresAt: licenseExpiresAt ?? null,
+    validatedAt: licenseValidatedAt ?? null,
+    freeMode: true,
+  };
+}
+
+async function removeLicense() {
+  await chrome.storage.local.remove(["license", "licenseValidatedAt", "licenseExpiresAt"]);
+  return { success: true };
+}
+
+async function handleCheckLicense() {
+  const saved = await getSavedLicense();
+  if (saved?.key) {
+    return {
+      success: true,
+      valid: true,
+      freeMode: true,
+      license: saved,
+    };
+  }
+
+  await saveLicense(FREE_LICENSE_KEY);
+
+  return {
+    success: true,
+    valid: true,
+    freeMode: true,
+    license: { key: FREE_LICENSE_KEY, license: FREE_LICENSE_KEY },
+  };
+}
+
+async function handleSaveToken(token) {
+  const value = token ? String(token).trim() : "";
+
+  // Evita apagar token válido quando chegar undefined ou vazio.
+  if (!value) {
+    const { authToken, lovable_token } = await chrome.storage.local.get(["authToken", "lovable_token"]);
+    const current = authToken || lovable_token || null;
+    return { success: Boolean(current), token: current, preserved: true };
+  }
+
+  await chrome.storage.local.set({ authToken: value, lovable_token: value });
+  return { success: true, token: value };
+}
+
+async function handleGetToken() {
+  const { authToken, lovable_token } = await chrome.storage.local.get(["authToken", "lovable_token"]);
+  const token = authToken || lovable_token || null;
+  return { success: Boolean(token), token };
+}
+
+async function handleSaveProjectId(projectId) {
+  const value = projectId ? String(projectId).trim() : "";
+  await chrome.storage.local.set({ projectId: value });
+  return { success: true };
+}
+
+async function handleGetProjectId() {
+  const { projectId } = await chrome.storage.local.get(["projectId"]);
+  return { success: Boolean(projectId), projectId: projectId || null };
+}
+
+function setupRequestInterceptor() {
+  // no-op in free mode
+}
