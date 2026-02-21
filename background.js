@@ -63,9 +63,73 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       chrome.storage.local.set({ projectId: urlMatch[1] });
     }
   },
-  { urls: ["https://api.lovable.dev/*"] },
+  { urls: ["https://*.lovable.dev/*"] },
   ["requestHeaders"],
 );
+
+async function hydrateTokenFromLovableTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://*.lovable.dev/*" });
+    if (!tabs.length) return null;
+
+    for (const tab of tabs) {
+      try {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const readStore = (store) => {
+              const values = [];
+              for (let i = 0; i < store.length; i++) {
+                const key = store.key(i);
+                const value = store.getItem(key);
+                if (!value) continue;
+                if (/token|auth|session|access/i.test(key) || value.startsWith('eyJ')) {
+                  values.push(value);
+                }
+              }
+              return values;
+            };
+
+            const allValues = [
+              ...readStore(window.localStorage),
+              ...readStore(window.sessionStorage),
+            ];
+
+            const normalized = allValues
+              .flatMap((value) => {
+                try {
+                  const parsed = JSON.parse(value);
+                  if (typeof parsed === 'string') return [parsed];
+                  if (parsed?.access_token) return [parsed.access_token];
+                  if (parsed?.token) return [parsed.token];
+                  if (parsed?.session?.access_token) return [parsed.session.access_token];
+                  return [];
+                } catch {
+                  return [value];
+                }
+              })
+              .map((value) => String(value).replace(/^Bearer\s+/i, '').trim())
+              .filter((value) => value.length > 20);
+
+            return normalized[0] || null;
+          },
+        });
+
+        const token = result?.result || null;
+        if (token) {
+          await chrome.storage.local.set({ authToken: token, lovable_token: token });
+          return token;
+        }
+      } catch (_error) {
+        // Ignora falha de uma aba e tenta próxima.
+      }
+    }
+  } catch (error) {
+    console.warn('[Auth] Não foi possível hidratar token das abas:', error);
+  }
+
+  return null;
+}
 
 // ===== SHIELD: Detectar fechamento do painel e remover shield =====
 
@@ -175,7 +239,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // getCredits removido - buscado direto da API Lovable no popup.js
 
   if (request.action === "sendMessage") {
-    processMessageSend(request.data).then(sendResponse);
+    (async () => {
+      const { authToken, lovable_token } = await chrome.storage.local.get([
+        "authToken",
+        "lovable_token",
+      ]);
+
+      if (!(authToken || lovable_token)) {
+        await hydrateTokenFromLovableTabs();
+      }
+
+      return processMessageSend(request.data);
+    })().then(sendResponse);
     return true;
   }
 
@@ -215,6 +290,10 @@ let sessionCheckInterval = null;
 async function checkSessionValidity() {
   try {
     const license = await getSavedLicense();
+
+    if (license?.freeMode) {
+      return;
+    }
     
     // SÃ³ validar se tiver licenÃ§a
     if (!license || !license.key) {
@@ -298,6 +377,10 @@ let activeUsersInterval = null;
 async function sendActiveUsersHeartbeat() {
   try {
     const license = await getSavedLicense();
+
+    if (license?.freeMode) {
+      return;
+    }
     
     // SÃ³ enviar heartbeat se tiver licenÃ§a vÃ¡lida
     if (!license || !license.key) {
@@ -361,6 +444,7 @@ function stopActiveUsersTracking() {
 }
 
 // Iniciar tracking quando a extensÃ£o carregar
+hydrateTokenFromLovableTabs();
 startActiveUsersTracking();
 startSessionCheck();
 
