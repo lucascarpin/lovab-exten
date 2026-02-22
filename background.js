@@ -111,6 +111,7 @@ async function hydrateTokenFromLovableTabs() {
               .map((value) => String(value).replace(/^Bearer\s+/i, '').trim())
               .filter((value) => value.length > 20);
 
+ codex/analyze-functions-in-licence.js-b87mit
             const parseJwtExp = (token) => {
               try {
                 const payload = token.split('.')[1];
@@ -124,6 +125,7 @@ async function hydrateTokenFromLovableTabs() {
 
             normalized.sort((a, b) => parseJwtExp(b) - parseJwtExp(a));
 
+ main
             return normalized[0] || null;
           },
         });
@@ -253,6 +255,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "sendMessage") {
     (async () => {
+ codex/analyze-functions-in-licence.js-b87mit
       await hydrateTokenFromLovableTabs();
 
       let result = await processMessageSend(request.data);
@@ -271,6 +274,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
 
       return result;
+
+      const { authToken, lovable_token } = await chrome.storage.local.get([
+        "authToken",
+        "lovable_token",
+      ]);
+
+      if (!(authToken || lovable_token)) {
+        await hydrateTokenFromLovableTabs();
+      }
+
+      return processMessageSend(request.data);
+ main
     })().then(sendResponse);
     return true;
   }
