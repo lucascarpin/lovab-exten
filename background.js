@@ -90,6 +90,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (urlMatch && urlMatch[1]) {
       chrome.storage.local.set({ projectId: urlMatch[1] });
     }
+ codex/analyze-functions-in-licence.js-3cot4d
   },
   { urls: ["https://*.lovable.dev/*"] },
   ["requestHeaders"],
@@ -169,6 +170,91 @@ async function hydrateTokenFromLovableTabs() {
 
             return normalized
               .sort((a, b) => jwtExp(b) - jwtExp(a))[0] || null;
+          },
+        });
+
+        const token = result?.result || null;
+        if (token) {
+          await chrome.storage.local.set({ authToken: token, lovable_token: token });
+          return token;
+        }
+      } catch (_error) {
+        // Ignora falha de uma aba e tenta próxima.
+      }
+    }
+  } catch (error) {
+    console.warn('[Auth] Não foi possível hidratar token das abas:', error);
+  }
+
+  return null;
+}
+
+  },
+  { urls: ["https://*.lovable.dev/*"] },
+  ["requestHeaders"],
+);
+main
+
+async function hydrateTokenFromLovableTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: "https://*.lovable.dev/*" });
+    if (!tabs.length) return null;
+
+    for (const tab of tabs) {
+      try {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const readStore = (store) => {
+              const values = [];
+              for (let i = 0; i < store.length; i++) {
+                const key = store.key(i);
+                const value = store.getItem(key);
+                if (!value) continue;
+                if (/token|auth|session|access/i.test(key) || value.startsWith('eyJ')) {
+                  values.push(value);
+                }
+              }
+              return values;
+            };
+
+            const allValues = [
+              ...readStore(window.localStorage),
+              ...readStore(window.sessionStorage),
+            ];
+
+            const normalized = allValues
+              .flatMap((value) => {
+                try {
+                  const parsed = JSON.parse(value);
+                  if (typeof parsed === 'string') return [parsed];
+                  if (parsed?.access_token) return [parsed.access_token];
+                  if (parsed?.token) return [parsed.token];
+                  if (parsed?.session?.access_token) return [parsed.session.access_token];
+                  return [];
+                } catch {
+                  return [value];
+                }
+              })
+              .map((value) => String(value).replace(/^Bearer\s+/i, '').trim())
+              .filter((value) => value.length > 20);
+
+ codex/analyze-functions-in-licence.js-b87mit
+            const parseJwtExp = (token) => {
+              try {
+                const payload = token.split('.')[1];
+                if (!payload) return 0;
+                const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+                return Number(json?.exp || 0);
+              } catch {
+                return 0;
+              }
+            };
+
+            normalized.sort((a, b) => parseJwtExp(b) - parseJwtExp(a));
+
+ main
+            return normalized[0] || null;
           },
         });
 
@@ -320,6 +406,44 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === "sendMessage") {
+    (async () => {
+ codex/analyze-functions-in-licence.js-b87mit
+      await hydrateTokenFromLovableTabs();
+
+      let result = await processMessageSend(request.data);
+
+      const message = String(result?.message || result?.error || "").toLowerCase();
+      const shouldRetry =
+        result?.success === false &&
+        (message.includes("sessão expirada") ||
+          message.includes("session expired") ||
+          message.includes("session token não disponível") ||
+          message.includes("session token not available"));
+
+      if (shouldRetry) {
+        await hydrateTokenFromLovableTabs();
+        result = await processMessageSend(request.data);
+      }
+
+      return result;
+
+      const { authToken, lovable_token } = await chrome.storage.local.get([
+        "authToken",
+        "lovable_token",
+      ]);
+
+      if (!(authToken || lovable_token)) {
+        await hydrateTokenFromLovableTabs();
+      }
+
+      return processMessageSend(request.data);
+ main
+    })().then(sendResponse);
+    return true;
+  }
+main
+
   // createNewProject e publish-project agora sÃ£o chamados diretamente via Edge Function/API no popup.js
 
   if (request.action === "executeShield") {
@@ -354,12 +478,20 @@ let sessionCheckInterval = null;
 
 // Verificar se sessÃ£o ainda Ã© vÃ¡lida (detecta acesso simultÃ¢neo em tempo real)
 async function checkSessionValidity() {
+
   try {
     const license = await getSavedLicense();
 
     if (license?.freeMode) {
       return;
     }
+  try {
+    const license = await getSavedLicense();
+
+    if (license?.freeMode) {
+      return;
+    }
+main
     
     // SÃ³ validar se tiver licenÃ§a
     if (!license || !license.key) {
@@ -447,6 +579,13 @@ async function sendActiveUsersHeartbeat() {
     if (license?.freeMode) {
       return;
     }
+  try {
+    const license = await getSavedLicense();
+
+    if (license?.freeMode) {
+      return;
+    }
+main
     
     // SÃ³ enviar heartbeat se tiver licenÃ§a vÃ¡lida
     if (!license || !license.key) {
@@ -513,6 +652,12 @@ function stopActiveUsersTracking() {
 hydrateTokenFromLovableTabs();
 startActiveUsersTracking();
 startSessionCheck();
+
+// Iniciar tracking quando a extensÃ£o carregar
+hydrateTokenFromLovableTabs();
+startActiveUsersTracking();
+startSessionCheck();
+main
 
 // Listener para iniciar/parar tracking quando licenÃ§a for ativada/removida
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
