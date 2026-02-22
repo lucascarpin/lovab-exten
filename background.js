@@ -111,6 +111,21 @@ async function hydrateTokenFromLovableTabs() {
               .map((value) => String(value).replace(/^Bearer\s+/i, '').trim())
               .filter((value) => value.length > 20);
 
+ codex/analyze-functions-in-licence.js-b87mit
+            const parseJwtExp = (token) => {
+              try {
+                const payload = token.split('.')[1];
+                if (!payload) return 0;
+                const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+                return Number(json?.exp || 0);
+              } catch {
+                return 0;
+              }
+            };
+
+            normalized.sort((a, b) => parseJwtExp(b) - parseJwtExp(a));
+
+ main
             return normalized[0] || null;
           },
         });
@@ -240,6 +255,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "sendMessage") {
     (async () => {
+ codex/analyze-functions-in-licence.js-b87mit
+      await hydrateTokenFromLovableTabs();
+
+      let result = await processMessageSend(request.data);
+
+      const message = String(result?.message || result?.error || "").toLowerCase();
+      const shouldRetry =
+        result?.success === false &&
+        (message.includes("sessão expirada") ||
+          message.includes("session expired") ||
+          message.includes("session token não disponível") ||
+          message.includes("session token not available"));
+
+      if (shouldRetry) {
+        await hydrateTokenFromLovableTabs();
+        result = await processMessageSend(request.data);
+      }
+
+      return result;
+
       const { authToken, lovable_token } = await chrome.storage.local.get([
         "authToken",
         "lovable_token",
@@ -250,6 +285,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
 
       return processMessageSend(request.data);
+ main
     })().then(sendResponse);
     return true;
   }
