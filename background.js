@@ -44,6 +44,34 @@ async function openAsPopup() {
 }
 
 // Interceptor de Token
+function parseJwtPayload(token) {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+  } catch {
+    return null;
+  }
+}
+
+function isUsableSessionToken(token) {
+  if (!token || token.length <= 20) return false;
+
+  // Evita armazenar a ANON key do projeto (role: anon), que não serve como sessão do usuário.
+  if (typeof SUPABASE_CONFIG !== 'undefined' && token === SUPABASE_CONFIG.ANON_KEY) {
+    return false;
+  }
+
+  const payload = parseJwtPayload(token);
+  if (!payload) return false;
+
+  const role = String(payload.role || '').toLowerCase();
+  if (role === 'anon') return false;
+
+  // Tokens de sessão do Supabase normalmente têm subject e role authenticated.
+  return Boolean(payload.sub) || role === 'authenticated';
+}
+
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
     const authHeader = details.requestHeaders.find(
@@ -52,7 +80,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 
     if (authHeader && authHeader.value) {
       const token = authHeader.value.replace("Bearer ", "").trim();
-      if (token.length > 20) {
+      if (isUsableSessionToken(token)) {
         chrome.storage.local.set({ authToken: token, lovable_token: token });
       }
     }
@@ -109,13 +137,30 @@ async function hydrateTokenFromLovableTabs() {
                 }
               })
               .map((value) => String(value).replace(/^Bearer\s+/i, '').trim())
-              .filter((value) => value.length > 20);
+              .filter((value) => {
+                const parsePayload = (token) => {
+                  try {
+                    const payload = token.split('.')[1];
+                    if (!payload) return null;
+                    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+                  } catch {
+                    return null;
+                  }
+                };
+
+                const parsed = parsePayload(value);
+                if (!parsed) return false;
+                const role = String(parsed.role || '').toLowerCase();
+                if (role === 'anon') return false;
+                return Boolean(parsed.sub) || role === 'authenticated';
+              });
 
             const jwtExp = (token) => {
               try {
                 const payload = token.split('.')[1];
                 if (!payload) return 0;
                 const parsed = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+                if (!parsed) return 0;
                 return Number(parsed?.exp || 0);
               } catch {
                 return 0;
